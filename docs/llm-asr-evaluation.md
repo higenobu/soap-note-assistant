@@ -93,3 +93,56 @@ docker compose -p soap-llm-asr --env-file .env -f compose.llm-asr.yml down
 ```
 
 既存 `soap-asr` は継続動作。モデルキャッシュを残すので `down -v` は不要。
+
+## 複数文の欠落を調べる診断情報
+
+短文は正解でも複数文では欠落する場合、GPU障害やモデル性能と即断しない。
+今回のコード確認では、共通デコーダーは末尾のリサンプリング結果も取り込み、
+20秒固定分割は全サンプルを処理する。上流モデルの `generate(inputs_embeds=...)` は
+生成トークンだけを返すので、入力トークン長でのスライスは行わない。
+上限は512生成トークン。EOSはdecoderのgeneration_config（なければtokenizer）に従う。
+EOSによる終了は、音声を全部文字起こしできたことを保証しない。
+
+入力の有効フレーム数をサンプル数から計算した期待値と照合し、不一致はエラーにする。
+上流WhisperFeatureExtractorのattention maskは、音声サンプル単位からhop_lengthごとの
+フレーム単位へ変換される。Whisper encoderはstride 2、adapterはkernel単位でプーリング。
+診断のadapter_audio_tokensはこの計算に基づく値であり、文字起こしの正しさを表さない。
+
+`.env` に以下を追加して、実験サービスだけ再ビルド・再作成する。
+モデルは同じrevisionを使い、認識文や生成トークン列をログに追加しない。
+
+```dotenv
+LLM_ASR_DIAGNOSTICS=1
+LLM_ASR_REVISION=085d2fc4fcffe1722036ce1bcbeffeca0f2f5e6b
+```
+
+```bash
+docker compose -p soap-llm-asr --env-file .env -f compose.llm-asr.yml up -d --build llm-asr
+curl --fail --show-error http://127.0.0.1:8004/soap-api/health
+```
+
+起動完了後、同じ「複数文」の音声と対応する正解文で compare_asr.py を再実行する。
+認識結果JSONの `results.llm-asr.response.diagnostics` に区間ごとの入力秒数、特徴量形状、
+有効マスクフレーム数、生成トークン数、EOSの設定、終了理由を付ける。
+診断自体に認識本文・音声値・全文トークンIDは含まれないが、同じレポートには認識本文が入る。
+
+```bash
+python3 - /private/asr-comparison.json <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    data = json.load(stream)
+print(json.dumps(data["results"]["llm-asr"].get("response", {}).get("diagnostics", []),
+                 ensure_ascii=False, indent=2))
+PY
+```
+
+- `input_seconds` と `mask_seconds` は丸め誤差（通常0.01秒未満）以外は一致する必要がある。
+- `finish_reason: eos` かつ512未満なら、トークン上限ではなくモデルのEOSによる終了。
+  内容欠落の原因がEOSだけと確定するわけではない。原音・前処理・モデル挙動も調べる。
+- `finish_reason: other` は終了条件の追加調査が必要。
+- 上限到達でEOSなしなら従来通り422。部分結果を成功扱いしない。
+- EOSを無効化したり、最低生成長を強制したりする変更は行わない。無音での捏造や繰り返しを
+  増やす可能性があるため、まず診断で条件を確認する。
+
+診断のCPUテストには実際の Transformers 4.51.0 の WhisperFeatureExtractor を使用する
+（モデル重みの取得・GPU推論は行わない）。開発テスト環境へ `transformers==4.51.0` も追加する。

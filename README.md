@@ -46,7 +46,7 @@ CPU/int8・8スレッド・同時1件の音声認識から始め、GPUやホス�
 npm ci
 npm test
 python -m venv .venv
-.venv/bin/pip install fastapi httpx PyJWT 'numpy>=1.26,<3' 'av>=14,<17'
+.venv/bin/pip install fastapi httpx PyJWT 'numpy>=1.26,<3' 'av>=14,<17' 'transformers==4.51.0'
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
