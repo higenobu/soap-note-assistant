@@ -1,0 +1,28 @@
+services:
+  asr:
+    build:
+      context: .
+      dockerfile: service/Dockerfile
+    ports:
+      - "127.0.0.1:8003:8000"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?Set the existing LLM API JWT secret locally}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ASR_ALLOWED_USERS: ${ASR_ALLOWED_USERS:?Set permitted LLM API usernames}
+      ASR_MODEL: ${ASR_MODEL:-small}
+      AUDIO_TMP: /audio-tmp
+      HF_HOME: /models/hf
+      OMP_NUM_THREADS: "8"
+    volumes:
+      - asr_models:/models
+    tmpfs:
+      - /audio-tmp:size=67108864,mode=1777
+      - /tmp:size=268435456,mode=1777
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 8
+    mem_limit: 8g
+    restart: unless-stopped
+volumes:
+  asr_models:

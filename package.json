@@ -1,0 +1,8 @@
+{
+  "name": "soap-note-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {"test": "node --test tests/*.cjs"},
+  "engines": {"node": ">=20.19.0"},
+  "devDependencies": {"jsdom": "26.1.0"}
+}
