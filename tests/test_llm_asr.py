@@ -77,6 +77,72 @@ class LlmAsrTests(unittest.TestCase):
                 self.assertEqual(len(api.decode_bounded(str(path))), 61*16000)
 
 
+class InputAndTerminationTests(unittest.TestCase):
+    def test_real_whisper_features_preserve_full_duration_and_partial_frame(self):
+        # Actual pinned feature extractor, no weights, network, Torch or GPU required.
+        from transformers import WhisperFeatureExtractor
+        extractor = WhisperFeatureExtractor(feature_size=128)
+        for samples in [557 * 160, 1282 * 160 + 1, 20 * 16000]:
+            waveform = np.zeros(samples, dtype=np.float32)
+            audio = extractor([waveform], sampling_rate=16000,
+                              return_attention_mask=True, return_tensors="np")
+            info = backend.input_diagnostics(waveform, audio, extractor, 4)
+            self.assertEqual(info["input_samples"], samples)
+            self.assertLess(abs(info["mask_seconds"] - samples / 16000), 0.011)
+            self.assertEqual(info["feature_shape"], [1, 128, 3000])
+            self.assertGreater(info["adapter_audio_tokens"], 0)
+        audio.attention_mask[:] = 0
+        with self.assertRaises(HTTPException) as failure:
+            backend.input_diagnostics(waveform, audio, extractor, 4)
+        self.assertEqual(failure.exception.status_code, 503)
+
+    def test_stereo_48khz_audio_is_resampled_to_complete_mono_16khz(self):
+        import wave
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stereo.wav"
+            signal = (np.sin(np.arange(48000) * 2 * np.pi * 400 / 48000) * 10000).astype(np.int16)
+            with wave.open(str(path), "wb") as audio:
+                audio.setnchannels(2)
+                audio.setsampwidth(2)
+                audio.setframerate(48000)
+                audio.writeframes(np.column_stack([signal, signal]).tobytes())
+            waveform = api.decode_bounded(str(path))
+            self.assertEqual(waveform.shape, (16000,))
+            self.assertTrue(np.isfinite(waveform).all())
+            self.assertGreater(np.max(np.abs(waveform[-100:])), 0.1)
+
+    def test_eos_and_token_limit_are_distinct_and_never_include_transcript_tokens(self):
+        tokenizer = Mock()
+        tokenizer.decode.return_value = "private transcript"
+        diagnostic = {}
+        text = backend.decode_generated(tokenizer, np.array([[123, 456, 2]]), 512, {2}, diagnostic)
+        self.assertEqual(text, "private transcript")
+        self.assertEqual(diagnostic["finish_reason"], "eos")
+        self.assertEqual(diagnostic["generated_tokens"], 3)
+        self.assertNotIn("private", str(diagnostic))
+        self.assertNotIn("123", str(diagnostic))
+        self.assertNotIn("456", str(diagnostic))
+        with self.assertRaises(HTTPException):
+            backend.decode_generated(tokenizer, np.array([[123,456,789]]), 3, {2}, diagnostic)
+        self.assertEqual(diagnostic["finish_reason"], "token_limit")
+        self.assertEqual(backend.generation_diagnostics([123], 512, {2})["finish_reason"], "other")
+
+    def test_diagnostics_opt_in_includes_empty_windows_without_claiming_completeness(self):
+        engine = object.__new__(backend.Engine)
+        engine.metadata = {"experimental": True}
+        engine.diagnostics_enabled = True
+        def fake(audio, diagnostic=None):
+            if diagnostic is not None:
+                diagnostic.update({"finish_reason": "eos", "generated_tokens": 1})
+            return "" if len(audio) == 20*16000 else "example"
+        engine.recognize = fake
+        result = engine.transcribe(np.zeros(21*16000), api.review_flags)
+        self.assertEqual(len(result["diagnostics"]), 2)
+        self.assertEqual(len(result["segments"]), 1)
+        engine.diagnostics_enabled = False
+        self.assertNotIn("diagnostics", engine.transcribe(np.zeros(21*16000), api.review_flags))
+
+
 class EvaluationTests(unittest.TestCase):
     def test_character_error_rate_insertion_deletion_substitution_and_empty(self):
         self.assertEqual(evaluation.cer("abc", "abc"), 0)

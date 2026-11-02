@@ -11,6 +11,7 @@ services:
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       ASR_ALLOWED_USERS: ${ASR_ALLOWED_USERS:?Set permitted LLM API usernames}
       ASR_BACKEND: llm-jp
+      LLM_ASR_DIAGNOSTICS: ${LLM_ASR_DIAGNOSTICS:-0}
       LLM_ASR_REVISION: ${LLM_ASR_REVISION:-main}
       HF_HOME: /models/hf
       HF_HUB_DISABLE_TELEMETRY: "1"
