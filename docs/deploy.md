@@ -103,3 +103,61 @@ docker compose -p soap-asr --env-file .env -f compose.asr.yml down
 録音同意・話者確認・情報へのアクセス権限、API・ゲートウェイのログ保存、コピー/PDFの管理を施設の運用に合わせてください。
 CPU時間・メモリ・認識精度・話者修正の負担を測定し、モデル変更やGPU利用はその結果から判断します。
 この初期版は自動話者分離・リアルタイム字幕・電子カルテ自動登録・DB履歴・医学的な自動判断を提供しません。
+
+
+## 代替: deepstationでsudoを使えない場合のSSHトンネル
+
+この方法ではapi.kcg.eduのゲートウェイ設定を変更しません。音声認識はdeepstationの
+127.0.0.1:8003、EC2の転送先は127.0.0.1:18003です。ASRのJWT認証・許可ユーザー設定は同じです。
+
+deepstationからEC2へのSSH接続に使う鍵を指定して実行します。秘密鍵はGitやチャットへ送らないでください。
+
+```bash
+ssh -i /path/to/ec2-key.pem -N -T \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+  -R 127.0.0.1:18003:127.0.0.1:8003 ec2-user@18.225.212.235
+```
+
+このターミナルを開いたまま、**別ターミナルのEC2側**で次を確認します。
+deepstation側で18003番を確認しても接続できません。
+
+```bash
+curl --fail --show-error http://127.0.0.1:18003/soap-api/health
+```
+
+EC2上でWeb画面とトンネル用設定を配置します。
+
+```bash
+cd ~/soap-note-assistant
+git pull --ff-only origin main
+sudo sh scripts/install-static.sh
+sudo install -m 644 deploy/apache-web-tunnel.inc /etc/httpd/llmjp/apache-soap.inc
+```
+
+既存のllm-jp.comの443番VirtualHost内に、以下がなければ1回だけ追加します。
+
+```apache
+Include /etc/httpd/llmjp/apache-soap.inc
+```
+
+```bash
+sudo httpd -t
+sudo httpd -S
+```
+
+Syntax OKを確認後:
+
+```bash
+sudo systemctl reload httpd
+curl --fail --show-error https://llm-jp.com/soap-api/health
+```
+
+公開画面は https://llm-jp.com/soap/ です。既存の /llmjp/、血液検査、Flaskの設定を維持します。
+トンネル用とゲートウェイ経由用の設定を同時にincludeしないでください。
+18003番を外部へ開放する必要はありません。ブラウザからEC2まではHTTPS、
+EC2からdeepstationまではSSH暗号化、両サーバー内のループバック区間だけHTTPです。
+
+これは初期デモ用の手動トンネルです。SSH切断後は再接続が必要です。
+常駐化する場合は、施設で許可された専用SSHアカウント・鍵・サービス管理方式で、
+接続先と転送先を制限して構成してください。
