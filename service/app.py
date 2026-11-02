@@ -49,6 +49,15 @@ def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bear
 @asynccontextmanager
 async def lifespan(app):
     auth_settings()
+    if os.environ.get("ASR_BACKEND", "whisper") == "llm-jp":
+        from llm_asr import Engine
+        state["engine"] = Engine()
+        state["model"] = state["engine"].model
+        try:
+            yield
+        finally:
+            state.clear()
+        return
     # Keep the host Python/CUDA and the existing LLM containers untouched.
     from faster_whisper import WhisperModel
     logging.getLogger("faster_whisper").setLevel(logging.ERROR)
@@ -71,13 +80,15 @@ async def no_store(request, call_next):
 
 @app.get("/soap-api/health")
 def health():
-    return {"status": "ok" if "model" in state else "loading", "device": "cpu", "model": MODEL_NAME}
+    metadata = state["engine"].metadata if "engine" in state else {"device": "cpu", "model": MODEL_NAME}
+    return {"status": "ok" if "model" in state else "loading", **metadata}
 
 
 def decode_bounded(path):
     """Decode at most 15 min; avoid expanding arbitrary compressed files in full."""
     import av
     import numpy as np
+    limit = 60 if os.environ.get("ASR_BACKEND", "whisper") == "llm-jp" else MAX_SECONDS
     pieces, count = [], 0
     try:
         with av.open(path) as container:
@@ -86,8 +97,8 @@ def decode_bounded(path):
                 nonlocal count
                 for frame in frames:
                     count += frame.samples
-                    if count > MAX_SECONDS * 16000:
-                        raise HTTPException(413, "音声は15分以内に分割してください。")
+                    if count > limit * 16000:
+                        raise HTTPException(413, f"音声は{limit}秒以内に分割してください。")
                     pieces.append(frame.to_ndarray().reshape(-1).astype(np.float32) / 32768.0)
             for frame in container.decode(audio=0):
                 append(resampler.resample(frame))
@@ -114,6 +125,8 @@ def review_flags(text):
 
 def transcribe_file(path):
     waveform = decode_bounded(path)
+    if "engine" in state:
+        return state["engine"].transcribe(waveform, review_flags)
     model = state.get("model")
     if model is None:
         raise HTTPException(503, "音声認識モデルの準備中です。")

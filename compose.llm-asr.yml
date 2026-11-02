@@ -1,0 +1,39 @@
+# Separate project/service: never replaces the current CPU Whisper service.
+services:
+  llm-asr:
+    build:
+      context: .
+      dockerfile: service/Dockerfile.llm-asr
+    ports:
+      - "127.0.0.1:8004:8000"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?Set the existing LLM API JWT secret locally}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ASR_ALLOWED_USERS: ${ASR_ALLOWED_USERS:?Set permitted LLM API usernames}
+      ASR_BACKEND: llm-jp
+      LLM_ASR_REVISION: ${LLM_ASR_REVISION:-main}
+      HF_HOME: /models/hf
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      AUDIO_TMP: /audio-tmp
+      OMP_NUM_THREADS: "8"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${LLM_ASR_GPU:?Set the allocated physical GPU index}"]
+              capabilities: [gpu]
+    volumes:
+      - llm_asr_models:/models
+    tmpfs:
+      - /audio-tmp:size=67108864,mode=1777
+      - /tmp:size=268435456,mode=1777
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 8
+    mem_limit: 64g
+    restart: "no"
+volumes:
+  llm_asr_models:

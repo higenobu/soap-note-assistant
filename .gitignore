@@ -8,3 +8,7 @@ __pycache__/
 *.pem
 *.key
 .testsprite/
+
+# Local ASR evaluation inputs/results may contain patient data.
+/private-evaluation/
+/asr-comparison*.json

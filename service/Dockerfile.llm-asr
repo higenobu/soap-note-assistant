@@ -1,0 +1,16 @@
+FROM python:3.12-slim-bookworm
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+# CUDA 12.1 wheels suit the existing 535 driver; no host CUDA changes.
+RUN pip install --no-cache-dir torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+COPY service/requirements.llm-asr.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir --no-deps 'git+https://github.com/Atotti/ja-speech-llm.git@b04d5061e4ccb68f8955a2af9483c143a860d6d0' \
+    && python -c "from speech_llm_ja import LlamaForSpeechLM, LlamaForSpeechLMConfig; from transformers import AutoProcessor, AutoTokenizer"
+# pip check reports omitted training dependencies of ja-speech-llm; the inference
+# import above is the build check. No model is downloaded during image build.
+COPY service/app.py service/llm_asr.py /app/
+RUN useradd --uid 10001 --create-home soap && mkdir /models && chown soap:soap /models
+USER soap
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--log-level", "warning"]

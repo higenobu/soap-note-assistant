@@ -46,7 +46,7 @@ CPU/int8・8スレッド・同時1件の音声認識から始め、GPUやホス�
 npm ci
 npm test
 python -m venv .venv
-.venv/bin/pip install fastapi httpx PyJWT
+.venv/bin/pip install fastapi httpx PyJWT 'numpy>=1.26,<3' 'av>=14,<17'
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
@@ -60,3 +60,9 @@ python -m venv .venv
 - https://github.com/SYSTRAN/faster-whisper
 - https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder
 - https://www.ncbi.nlm.nih.gov/books/NBK482263/
+
+### ASR 専用モデルの分離検証
+
+既存 Whisper と別の GPU Docker サービス（8004）で ASR 専用モデルを検証できます。
+[起動・同一音声の CER / 処理時間比較](docs/llm-asr-evaluation.md)を参照してください。
+実験用で、実機 GPU の推論精度・必要メモリは未検証です。
