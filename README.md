@@ -66,3 +66,8 @@ python -m venv .venv
 既存 Whisper と別の GPU Docker サービス（8004）で ASR 専用モデルを検証できます。
 [起動・同一音声の CER / 処理時間比較](docs/llm-asr-evaluation.md)を参照してください。
 実験用で、実機 GPU の推論精度・必要メモリは未検証です。
+
+### DockerでSSHトンネルを常駐化する
+
+sudoやlingerを利用できないdeepstationでは、独立したDockerサービスで既存CPU ASRへの
+SSHトンネルを維持できます。[設定・切り替え手順](docs/docker-tunnel.md)を参照してください。

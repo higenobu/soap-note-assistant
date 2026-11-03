@@ -1,0 +1,78 @@
+# Linux rootful Docker: share host loopback to reach the existing CPU ASR at 8003.
+services:
+  tunnel:
+    build:
+      context: ./service/tunnel
+      args:
+        TUNNEL_UID: ${TUNNEL_UID:?Use sh scripts/tunnel-compose.sh}
+        TUNNEL_GID: ${TUNNEL_GID:?Use sh scripts/tunnel-compose.sh}
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: 0.25
+    mem_limit: 128m
+    stop_grace_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    volumes:
+      - type: bind
+        source: ${TUNNEL_KEY_FILE:?Set an absolute SSH key path in .env.tunnel}
+        target: /run/ssh/key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TUNNEL_KNOWN_HOSTS_FILE:?Set the verified known_hosts path in .env.tunnel}
+        target: /run/ssh/known_hosts
+        read_only: true
+        bind:
+          create_host_path: false
+    command:
+      - /usr/bin/ssh
+      - -F
+      - /dev/null
+      - -N
+      - -T
+      - -i
+      - /run/ssh/key
+      - -o
+      - IdentitiesOnly=yes
+      - -o
+      - IdentityAgent=none
+      - -o
+      - BatchMode=yes
+      - -o
+      - PasswordAuthentication=no
+      - -o
+      - KbdInteractiveAuthentication=no
+      - -o
+      - StrictHostKeyChecking=yes
+      - -o
+      - UserKnownHostsFile=/run/ssh/known_hosts
+      - -o
+      - GlobalKnownHostsFile=/dev/null
+      - -o
+      - UpdateHostKeys=no
+      - -o
+      - ForwardAgent=no
+      - -o
+      - ControlMaster=no
+      - -o
+      - ControlPath=none
+      - -o
+      - ConnectTimeout=15
+      - -o
+      - ExitOnForwardFailure=yes
+      - -o
+      - ServerAliveInterval=30
+      - -o
+      - ServerAliveCountMax=3
+      - -R
+      - 127.0.0.1:18003:127.0.0.1:8003
+      - ec2-user@18.225.212.235
