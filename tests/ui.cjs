@@ -50,3 +50,37 @@ test('3種類の見本・生成後の切替・基本情報・編集と印刷プ�
  d.getElementById('demo').click();assert.equal(d.getElementById('reportPatientId').value,'');assert.ok(d.getElementById('pdf').disabled);
  d.getElementById('logout').click();assert.equal(template.value,'standard');assert.ok(d.getElementById('reportPreview').textContent.includes('見本'));assert.ok(!d.getElementById('reportPreview').textContent.includes('架空ID'));s.close();
 });
+test('要約SOAPの本文だけを帳票に配置し、根拠と省略候補は画面に残す',async()=>{
+ const s=await setup(),{d,w}=s;await login(s);d.getElementById('demo').click();
+ const area=d.querySelector('.utterance textarea');area.value='こんにちは。';area.dispatchEvent(new w.Event('input'));
+ const mode=d.getElementById('soapMode');mode.value='summary';mode.dispatchEvent(new w.Event('change'));check(s,'transcriptReviewed');check(s,'soapConsent');
+ d.getElementById('generate').click();const request=JSON.parse(s.calls.at(-1).options.body);assert.ok(request.prompt.includes('要約'));assert.equal(request.max_tokens,8192);
+ s.resolve({answer:JSON.stringify({S:[],O:[{text:'原本の記録で診察所見を照合。',source_ids:['u2']}],A:[{text:'評価保留。',source_ids:['u3']}],P:[{text:'記録確認後に次回方針を相談。',source_ids:['u4']}],uncertain:[],omitted:[{id:'u1',reason:'挨拶',duplicate_of:null}]})});await tick();
+ assert.equal(d.getElementById('result').hidden,false);assert.equal(d.getElementById('omittedEvidence').hidden,false);assert.ok(d.getElementById('omittedList').textContent.includes('こんにちは'));
+ assert.ok(d.querySelector('#notes details').textContent.includes('要約の根拠'));assert.ok(d.getElementById('reportPreview').textContent.includes('評価保留。'));assert.ok(!d.getElementById('reportPreview').textContent.includes('こんにちは'));
+ assert.ok(d.getElementById('pdf').disabled);check(s,'doctorReviewed');d.getElementById('pdf').click();
+ assert.ok(s.report.window.document.body.textContent.includes('評価保留。'));assert.ok(!s.report.window.document.body.textContent.includes('こんにちは'));assert.ok(!s.report.window.document.body.textContent.includes('u3 / 医師'));
+ mode.value='extract';mode.dispatchEvent(new w.Event('change'));assert.ok(d.getElementById('result').hidden);assert.ok(d.getElementById('pdf').disabled);assert.equal(d.getElementById('omittedList').textContent,'');s.close();
+});
+test('要約方式を変更した後の遅延応答を表示しない',async()=>{
+ const s=await setup(),{d,w}=s;await login(s);d.getElementById('demo').click();check(s,'transcriptReviewed');check(s,'soapConsent');d.getElementById('generate').click();
+ d.getElementById('soapMode').value='summary';d.getElementById('soapMode').dispatchEvent(new w.Event('change'));
+ s.resolve({answer:JSON.stringify({S:['u1'],O:['u2'],A:['u3'],P:['u4'],uncertain:[]})});await tick();assert.ok(d.getElementById('result').hidden);assert.ok(d.getElementById('reportPreview').textContent.includes('見本'));assert.equal(d.querySelectorAll('#notes textarea').length,0);s.close();
+});
+test('話者候補には認証・送信同意が必要で、手動設定を維持し仮入力後は人が再確認する',async()=>{
+ const s=await setup(),{d,w}=s;d.getElementById('demo').click();const speaker=d.querySelector('.utterance select');speaker.value='不明';speaker.dispatchEvent(new w.Event('change'));
+ assert.ok(d.getElementById('suggestSpeakers').disabled);await login(s);assert.ok(d.getElementById('suggestSpeakers').disabled);check(s,'soapConsent');assert.equal(d.getElementById('suggestSpeakers').disabled,false);
+ d.getElementById('suggestSpeakers').click();assert.ok(JSON.parse(s.calls.at(-1).options.body).prompt.includes('話者の役割候補'));
+ s.resolve({answer:JSON.stringify({speakers:[{id:'u1',speaker:'患者'}]})});await tick();
+ assert.equal(d.querySelector('.utterance select').value,'患者');assert.equal(d.querySelectorAll('.utterance select')[1].value,'医師');assert.ok(d.querySelector('.speaker-suggestion').textContent.includes('未確認'));
+ assert.equal(d.getElementById('transcriptReviewed').checked,false);assert.ok(d.getElementById('generate').disabled);check(s,'transcriptReviewed');assert.equal(d.getElementById('generate').disabled,false);assert.ok(d.querySelector('.speaker-suggestion').textContent.includes('確認済み'));
+ const selected=d.querySelector('.utterance select');selected.value='家族';selected.dispatchEvent(new w.Event('change'));assert.equal(d.querySelector('.speaker-suggestion'),null);assert.ok(d.getElementById('generate').disabled);s.close();
+});
+test('話者推定中の消去で遅延候補を適用せず、形式不正の候補も適用しない',async()=>{
+ for(const clear of [false,true]){
+  const s=await setup(),{d,w}=s;await login(s);d.getElementById('demo').click();const speaker=d.querySelector('.utterance select');speaker.value='不明';speaker.dispatchEvent(new w.Event('change'));check(s,'soapConsent');d.getElementById('suggestSpeakers').click();
+  if(clear)d.getElementById('clear').click();s.resolve({answer:JSON.stringify({speakers:[{id:clear?'u1':'u2',speaker:'医師'}]})});await tick();
+  if(clear){assert.equal(d.querySelectorAll('.utterance').length,0);assert.equal(d.querySelector('.speaker-suggestion'),null);}
+  else{assert.equal(d.querySelector('.utterance select').value,'不明');assert.ok(d.getElementById('speakerStatus').textContent.includes('変更していません'));}s.close();
+ }
+});

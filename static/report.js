@@ -31,12 +31,12 @@
  `;
  function templateName(value){return Object.hasOwn(TEMPLATES,value)?value:'standard';}
  function node(doc,tag,className,text){const el=doc.createElement(tag);if(className)el.className=className;if(text!==undefined)el.textContent=text;return el;}
- function render(doc,{template='standard',sections={},metadata={},reviewed=false,example=false,issuedAt=''}){
+ function render(doc,{template='standard',sections={},metadata={},reviewed=false,example=false,issuedAt='',mode='extract'}){
   template=templateName(template);
   const report=node(doc,'article','soap-report template-'+template);
   report.setAttribute('aria-label',TEMPLATES[template]+'の帳票プレビュー');
   const header=node(doc,'header','report-heading');
-  header.append(node(doc,'p','report-kicker','KTL / CLINICAL NOTES'),node(doc,'h2','',template==='record'?'診療記録票｜SOAP下書き':'SOAPカルテ下書き'),node(doc,'p','report-subtitle',TEMPLATES[template]+' · A4縦'),node(doc,'span','report-state',example?'テンプレート見本（診療記録ではありません）':reviewed?'医師確認済みの下書き':'未確認の下書き・印刷前に医師確認'));
+  header.append(node(doc,'p','report-kicker','KTL / CLINICAL NOTES'),node(doc,'h2','',template==='record'?'診療記録票｜SOAP下書き':'SOAPカルテ下書き'),node(doc,'p','report-subtitle',TEMPLATES[template]+' · A4縦 · '+(mode==='summary'?'要約SOAP':'原文分類')),node(doc,'span','report-state',example?'テンプレート見本（診療記録ではありません）':reviewed?'医師確認済みの下書き':'未確認の下書き・印刷前に医師確認'));
   report.append(header);
   if(template==='record'){
    const meta=node(doc,'dl','report-meta');
@@ -62,9 +62,9 @@
    node(doc,'p','','出力日時：'+issuedAt),node(doc,'p','','記録補助の下書きです。自動保存・自動カルテ登録は行いません。'));
   report.append(footer);return report;
  }
- function plainText({sections={},metadata={},template='standard',issuedAt=''}){
+ function plainText({sections={},metadata={},template='standard',issuedAt='',mode='extract'}){
   const meta=templateName(template)==='record'?['患者ID：'+(metadata.patientId||''),'診察日時：'+(metadata.visitAt||''),'担当医：'+(metadata.clinician||''),'施設名：'+(metadata.facility||'')].join('\n')+'\n\n':'';
-  return 'SOAPカルテ下書き（医師確認済み・自動保存なし）\n出力日時：'+issuedAt+'\n\n'+meta+Object.entries(LABELS).map(([key,title])=>title+'\n'+(sections[key]||'')).join('\n\n');
+  return 'SOAPカルテ下書き（医師確認済み・自動保存なし）\n出力日時：'+issuedAt+'\n作成方法：'+(mode==='summary'?'要約SOAP':'原文分類')+'\n\n'+meta+Object.entries(LABELS).map(([key,title])=>title+'\n'+(sections[key]||'')).join('\n\n');
  }
  const api={TEMPLATES,STYLE,render,plainText};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.SOAPReport=api;
 })(typeof window!=='undefined'?window:globalThis);
