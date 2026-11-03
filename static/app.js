@@ -1,17 +1,19 @@
 'use strict';
 const C=SOAPCore,R=SOAPReport,$=id=>document.getElementById(id);
-let token='',rows=[],blob=null,audioUrl='',recorder=null,stream=null,recording=false,starting=false,busy=false,revision=0,authRevision=0,loginBusy=false,controller=null,timer=null,noteReady=false;
+let token='',rows=[],blob=null,audioUrl='',recorder=null,stream=null,recording=false,starting=false,busy=false,revision=0,authRevision=0,loginBusy=false,controller=null,timer=null,noteReady=false,noteMode='extract',classifiedRows=[],assignments={};
 function status(id,text){$(id).textContent=text;}
 function controls(){
- $('resultMode').textContent=($('soapMode').value==='summary'?'要約SOAP':'原文分類')+'・'+($('doctorReviewed').checked?'医師確認済み':'医師確認前');$('soapMode').disabled=recording||starting;$('record').disabled=recording||starting||busy;$('stop').disabled=!recording;$('audioFile').disabled=recording||starting||busy;
+ $('resultMode').textContent=(noteMode==='summary'?'要約SOAP':'原文分類')+'・'+($('doctorReviewed').checked?'医師確認済み':'医師確認前');$('soapMode').disabled=recording||starting;$('record').disabled=recording||starting||busy;$('stop').disabled=!recording;$('audioFile').disabled=recording||starting||busy;
  $('transcribe').disabled=!blob||!token||!$('asrConsent').checked||recording||busy||starting;
  $('suggestSpeakers').disabled=!token||!rows.some(r=>r.speaker==='不明')||!$('soapConsent').checked||recording||starting||busy;
  for(const marker of document.querySelectorAll('.speaker-suggestion'))marker.textContent=$('transcriptReviewed').checked?'内容からの候補（会話確認済み）':'内容からの候補（未確認）';
  $('generate').disabled=!token||!rows.length||!$('transcriptReviewed').checked||!$('soapConsent').checked||recording||busy||starting;
  $('loginBtn').disabled=loginBusy||busy||recording||starting;$('add').disabled=recording||starting||busy||rows.length>=200;$('demo').disabled=recording||starting||busy;
- $('copy').disabled=!noteReady||!$('doctorReviewed').checked;$('pdf').disabled=$('copy').disabled;updatePreview();
+ $('summarize').disabled=!token||busy||recording||starting||!classifiedRows.length||!$('classificationReviewed').checked||!$('soapConsent').checked||$('soapMode').value!=='summary';
+ $('doctorReviewed').disabled=!noteReady||!$('classificationReviewed').checked||busy;
+ $('copy').disabled=!noteReady||!$('doctorReviewed').checked||!$('classificationReviewed').checked||busy;$('pdf').disabled=$('copy').disabled;updatePreview();
 }
-function invalidate(){revision++;if(controller)controller.abort();controller=null;busy=false;noteReady=false;$('result').hidden=true;$('notes').replaceChildren();$('omittedEvidence').hidden=true;$('omittedList').replaceChildren();$('doctorReviewed').checked=false;$('transcriptReviewed').checked=false;status('soapStatus','');status('speakerStatus','');status('exportStatus','');controls();}
+function invalidate(){resetSummary();classifiedRows=[];assignments={};$('classification').hidden=true;$('classificationRows').replaceChildren();$('transcriptReviewed').checked=false;status('soapStatus','');status('speakerStatus','');controls();}
 function stopTracks(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;if(timer)clearTimeout(timer);timer=null;}
 function clearAudio(){if(audioUrl)URL.revokeObjectURL(audioUrl);audioUrl='';blob=null;$('playback').pause();$('playback').removeAttribute('src');$('playback').hidden=true;}
 function clearAll(logout=true){
@@ -105,21 +107,77 @@ $('suggestSpeakers').addEventListener('click',async()=>{
  }catch(error){if(version===revision&&error.name!=='AbortError'){authError(error);status('speakerStatus',error.message+' 話者は変更していません。');}}
  finally{if(version===revision){busy=false;controller=null;controls();}}
 });
-$('soapMode').addEventListener('change',()=>{invalidate();status('soapStatus','作成方法を変更しました。会話を確認し直して生成してください。');});
+function clearNote(){noteReady=false;noteMode='extract';$('result').hidden=true;$('notes').replaceChildren();$('omittedEvidence').hidden=true;$('omittedList').replaceChildren();$('doctorReviewed').checked=false;status('exportStatus','');}
+function resetSummary(){revision++;if(controller)controller.abort();controller=null;busy=false;clearNote();$('classificationReviewed').checked=false;status('summaryStatus','');}
+function renderNotes(groups,texts,omitted,mode){
+ clearNote();
+ if(omitted.length){$('omittedEvidence').hidden=false;$('omittedEvidence').open=true;$('omittedHeading').textContent='省略した原文を確認（'+omitted.length+'件）';for(const item of omitted){const p=document.createElement('p');p.className='evidence';p.textContent='['+item.id+' / '+item.source.speaker+' / '+item.reason+'] '+item.source.text;$('omittedList').append(p);}}
+ for(const [key,title] of Object.entries(C.SECTIONS)){
+  const section=document.createElement('section'),heading=document.createElement('h3'),area=document.createElement('textarea'),details=document.createElement('details'),summary=document.createElement('summary'),evidence=document.createElement('p');
+  section.className='note';heading.textContent=title;area.value=texts[key];area.rows=Math.max(3,Math.min(12,groups[key].length*2));area.dataset.section=key;area.setAttribute('aria-label',title+'の下書き');
+  area.addEventListener('input',()=>{$('doctorReviewed').checked=false;status('exportStatus','編集した内容を医師が再確認してください。');controls();});
+  summary.textContent=mode==='summary'?'この区分の確認済み原文と照合':'分類元の発話を確認';evidence.className='evidence';evidence.textContent=groups[key].map(r=>'['+r.id+' / '+r.speaker+'] '+r.text).join('\n')||'該当発話なし';details.open=mode==='summary';details.append(summary,evidence);section.append(heading,area,details);$('notes').append(section);
+ }
+ noteMode=mode;noteReady=true;$('result').hidden=false;
+}
+function showOriginal(){const prepared=C.validateClassification(classifiedRows,assignments);renderNotes(prepared.groups,C.noteText(prepared.groups),prepared.omitted,'extract');}
+function renderClassification(){
+ $('classificationRows').replaceChildren();
+ for(const row of classifiedRows){
+  const article=document.createElement('article'),header=document.createElement('header'),label=document.createElement('strong'),select=document.createElement('select'),text=document.createElement('p');article.className='classification-row';label.textContent=row.id+' / '+row.speaker;select.setAttribute('aria-label',row.id+'のSOAP分類');
+  for(const [key,title] of Object.entries({...C.SECTIONS,omit:'省略（手動で確認）'})){
+   const option=document.createElement('option');option.value=key;option.textContent=title;option.disabled=(['O','A','P'].includes(key)&&row.speaker!=='医師')||(row.speaker==='不明'&&!['uncertain','omit'].includes(key));select.append(option);
+  }
+  select.value=assignments[row.id];select.addEventListener('change',()=>{
+   const next={...assignments,[row.id]:select.value};try{C.validateClassification(classifiedRows,next);}catch(error){select.value=assignments[row.id];status('summaryStatus',error.message);return;}
+   assignments=next;resetSummary();if($('soapMode').value==='extract')showOriginal();status('summaryStatus','分類を変更しました。分類・省略対象を確認し直してください。');controls();
+  });
+  text.textContent=row.text;header.append(label,select);article.append(header,text);$('classificationRows').append(article);
+ }
+ $('classification').hidden=false;
+}
+$('soapMode').addEventListener('change',()=>{
+ if(classifiedRows.length){resetSummary();if($('soapMode').value==='extract')showOriginal();status('summaryStatus','作成方法を変更しました。分類を確認して次へ進んでください。');controls();}
+ else{invalidate();status('soapStatus','作成方法を変更しました。会話を確認し直して分類してください。');}
+});
+$('classificationReviewed').addEventListener('change',()=>{
+ if(!$('classificationReviewed').checked){resetSummary();if(classifiedRows.length&&$('soapMode').value==='extract')showOriginal();}
+ controls();
+});
 $('generate').addEventListener('click',async()=>{
  if(!token||busy||!$('transcriptReviewed').checked||!$('soapConsent').checked)return;let snapshot;
- try{snapshot=JSON.parse(JSON.stringify(C.validateSegments(rows)));}catch(e){status('soapStatus',e.message);return;}
- const mode=$('soapMode').value,version=revision,auth=token;busy=true;noteReady=false;$('result').hidden=true;$('notes').replaceChildren();$('omittedEvidence').hidden=true;$('omittedList').replaceChildren();$('doctorReviewed').checked=false;controller=new AbortController();controls();status('soapStatus',mode==='summary'?'会話を要約し、根拠ID・数値・単位を照合中…':'会話をSOAPに分類し、発話IDと話者を検証中…');
+ try{snapshot=JSON.parse(JSON.stringify(C.validateSegments(rows)));}catch(error){status('soapStatus',error.message);return;}
+ resetSummary();classifiedRows=[];assignments={};$('classification').hidden=true;$('classificationRows').replaceChildren();
+ const version=revision,auth=token;busy=true;controller=new AbortController();controls();status('soapStatus','原文をSOAPに分類し、発話IDと話者を検証中…');
  try{
-  const data=await jsonRequest('/llmjp/generate',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+auth},body:JSON.stringify({prompt:mode==='summary'?C.summaryPrompt(snapshot):C.prompt(snapshot),max_tokens:mode==='summary'?8192:4096}),signal:controller.signal});
-  if(version!==revision||auth!==token)return;const result=mode==='summary'?C.validateSummary(data.answer,snapshot):null,groups=result?result.groups:C.validateSOAP(data.answer,snapshot),texts=result?result.texts:C.noteText(groups);
-  $('resultMode').textContent=(mode==='summary'?'要約SOAP':'原文分類')+'・医師確認前';
-  if(result?.omitted.length){$('omittedEvidence').hidden=false;$('omittedEvidence').open=true;$('omittedHeading').textContent='省略候補の会話を確認（'+result.omitted.length+'件）';for(const item of result.omitted){const p=document.createElement('p');p.className='evidence';p.textContent='['+item.id+' / '+item.source.speaker+' / '+item.reason+'] '+item.source.text;$('omittedList').append(p);}}
-  for(const [key,title]of Object.entries(C.SECTIONS)){
-   const section=document.createElement('section'),heading=document.createElement('h3'),area=document.createElement('textarea'),details=document.createElement('details'),summary=document.createElement('summary'),evidence=document.createElement('p');section.className='note';heading.textContent=title;area.value=texts[key];area.rows=Math.max(3,Math.min(12,groups[key].length*2));area.dataset.section=key;area.setAttribute('aria-label',title+'の下書き');area.addEventListener('input',()=>{$('doctorReviewed').checked=false;status('exportStatus','編集した内容を医師が再確認してください。');controls();});summary.textContent=mode==='summary'?'要約の根拠となる原文を確認':'分類元の発話を確認';evidence.className='evidence';evidence.textContent=groups[key].map(r=>'['+r.id+' / '+r.speaker+'] '+r.text).join('\n')||'該当発話なし';details.append(summary,evidence);section.append(heading,area,details);$('notes').append(section);
+  const data=await jsonRequest('/llmjp/generate',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+auth},body:JSON.stringify({prompt:C.prompt(snapshot),max_tokens:4096}),signal:controller.signal});
+  if(version!==revision||auth!==token)return;const groups=C.validateSOAP(data.answer,snapshot);classifiedRows=snapshot;assignments=Object.fromEntries(Object.entries(groups).flatMap(([key,group])=>group.map(row=>[row.id,key])));renderClassification();
+  if($('soapMode').value==='extract')showOriginal();
+  status('soapStatus','原文を分類しました。03で分類先と省略対象を確認・修正してください。');
+ }catch(error){if(version===revision&&error.name!=='AbortError'){authError(error);status('soapStatus',error.message+' 分類結果は表示していません。');}}
+ finally{if(version===revision){busy=false;controller=null;controls();}}
+});
+$('summarize').addEventListener('click',async()=>{
+ if(!token||busy||recording||starting||$('soapMode').value!=='summary'||!$('classificationReviewed').checked||!$('soapConsent').checked||!classifiedRows.length)return;
+ let prepared;try{prepared=C.validateClassification(classifiedRows,assignments);}catch(error){status('summaryStatus',error.message);return;}
+ const version=++revision,auth=token,requestController=new AbortController();controller=requestController;busy=true;clearNote();controls();
+ const groups=prepared.groups,texts=C.noteText(Object.fromEntries(Object.keys(C.SECTIONS).map(key=>[key,[]]))),omitted=[...prepared.omitted];
+ // Unresolved speech remains verbatim; it is not freely rewritten by the model.
+ texts.uncertain=groups.uncertain.map(row=>row.speaker+'：'+row.text).join('\n')||'なし';
+ const sections=['S','O','A','P'].filter(key=>groups[key].length);let active='';
+ try{
+  if(sections.length){
+   active='区分別バッチ';const prompts=sections.map(key=>C.sectionSummaryPrompt(key,groups[key]));status('summaryStatus','確認済みの'+sections.join('・')+'を区分別プロンプトで要約中…');
+   const data=await jsonRequest('/llmjp/batch',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+auth},body:JSON.stringify({prompts,max_tokens:4096}),signal:requestController.signal});
+   if(version!==revision||auth!==token)return;
+   if(!Array.isArray(data.results)||data.results.length!==sections.length)throw Error('バッチ応答の件数が区分数と一致しません。');
+   for(const [index,key] of sections.entries()){
+    active=key;const response=data.results[index];if(!response||response.prompt!==prompts[index])throw Error('バッチ応答と区分別プロンプトの対応を確認できませんでした。');
+    const result=C.validateSectionSummary(response.answer,key,groups[key]);texts[key]=result.texts[key];omitted.push(...result.omitted);
+   }
   }
-  noteReady=true;$('result').hidden=false;status('soapStatus',mode==='summary'?'要約SOAPを作成しました。根拠・省略候補と照合し、薬剤・否定・時系列を医師が確認してください。':'抽出型の下書きを作成しました。分類・内容は医師が確認してください。');
- }catch(error){if(version===revision&&error.name!=='AbortError'){authError(error);status('soapStatus',error.message+' 下書きは表示していません。');}}
+  if(version!==revision||auth!==token)return;renderNotes(groups,texts,omitted,'summary');status('summaryStatus','区分ごとの要約が完了しました。原文と照合して医師確認を行ってください。');
+ }catch(error){if(version===revision&&error.name!=='AbortError'){authError(error);status('summaryStatus',active+'の要約：'+error.message+' 原文分類は保持しています。分類を確認して再試行するか、原文分類の表示へ切り替えてください。');}}
  finally{if(version===revision){busy=false;controller=null;controls();}}
 });
 $('doctorReviewed').addEventListener('change',controls);
@@ -127,7 +185,7 @@ const reportStyle=document.createElement('style');reportStyle.textContent=R.STYL
 const reportFieldIds=['reportPatientId','reportVisitAt','reportClinician','reportFacility'];
 function reportData(){
  const sections=Object.fromEntries([...$('notes').querySelectorAll('textarea')].map(area=>[area.dataset.section,area.value]));
- return {template:$('reportTemplate').value,mode:$('soapMode').value,sections,metadata:{patientId:$('reportPatientId').value,visitAt:$('reportVisitAt').value.replace('T',' '),clinician:$('reportClinician').value,facility:$('reportFacility').value},reviewed:noteReady&&$('doctorReviewed').checked,example:!noteReady,issuedAt:new Date().toLocaleString('ja-JP')};
+ return {template:$('reportTemplate').value,mode:noteMode,sections,metadata:{patientId:$('reportPatientId').value,visitAt:$('reportVisitAt').value.replace('T',' '),clinician:$('reportClinician').value,facility:$('reportFacility').value},reviewed:noteReady&&$('doctorReviewed').checked,example:!noteReady,issuedAt:new Date().toLocaleString('ja-JP')};
 }
 function resetReport(clearTemplate=true){for(const id of reportFieldIds)$(id).value='';if(clearTemplate)$('reportTemplate').value='standard';}
 function updatePreview(){
@@ -139,9 +197,9 @@ function updatePreview(){
 $('reportTemplate').addEventListener('change',updatePreview);
 for(const id of reportFieldIds)$(id).addEventListener('input',()=>{$('doctorReviewed').checked=false;status('exportStatus','基本情報を医師が再確認してください。');controls();});
 function exportText(){return R.plainText(reportData());}
-$('copy').addEventListener('click',async()=>{if(!noteReady||!$('doctorReviewed').checked)return;const version=revision;try{await navigator.clipboard.writeText(exportText());if(version===revision)status('exportStatus','下書きをコピーしました。');}catch{if(version===revision)status('exportStatus','コピーできませんでした。各欄を選択してコピーしてください。');}});
+$('copy').addEventListener('click',async()=>{if(!noteReady||!$('doctorReviewed').checked||!$('classificationReviewed').checked)return;const version=revision;try{await navigator.clipboard.writeText(exportText());if(version===revision)status('exportStatus','下書きをコピーしました。');}catch{if(version===revision)status('exportStatus','コピーできませんでした。各欄を選択してコピーしてください。');}});
 $('pdf').addEventListener('click',()=>{
- if(!noteReady||!$('doctorReviewed').checked)return;const report=window.open('','_blank');if(!report){status('exportStatus','ポップアップを許可してください。');return;}
+ if(!noteReady||!$('doctorReviewed').checked||!$('classificationReviewed').checked)return;const report=window.open('','_blank');if(!report){status('exportStatus','ポップアップを許可してください。');return;}
  const d=report.document;d.title='SOAPカルテ下書き｜'+R.TEMPLATES[$('reportTemplate').value];d.documentElement.lang='ja';
  // Isolate the exported document from the editor; preserve text via textContent.
  report.opener=null;const style=d.createElement('style');style.textContent=R.STYLE+'body{margin:0;padding:24px;background:#eef2f5}.report-print-controls{max-width:210mm;margin:0 auto 16px;font:14px system-ui}.report-print-controls button{padding:10px 16px;cursor:pointer}@media print{body{padding:0;background:#fff}}';d.head.append(style);
