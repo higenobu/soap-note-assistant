@@ -71,3 +71,10 @@ python -m venv .venv
 
 sudoやlingerを利用できないdeepstationでは、独立したDockerサービスで既存CPU ASRへの
 SSHトンネルを維持できます。[設定・切り替え手順](docs/docker-tunnel.md)を参照してください。
+
+### 表示・印刷テンプレート
+
+標準SOAP・表形式・診療記録票の3種類をプルダウンで選択し、見本または編集済み本文を
+プレビューできます。医師確認後に選択した形式で印刷・PDF保存します。
+診療記録票の任意の基本情報はAIへ送らず、本文・基本情報の編集時は再確認が必要です。
+[操作とEC2配置手順](docs/print-templates.md)を参照してください。Docker再ビルドは不要です。
