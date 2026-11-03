@@ -41,3 +41,20 @@ test('話者候補は不明の発話だけを対象とし、未知ID・重複・
  for(const speakers of [[],[{id:'u1',speaker:'医師'}],[{id:'u5',speaker:'山田'}],[{id:'u5',speaker:'患者'},{id:'u5',speaker:'患者'}]])assert.throws(()=>C.validateSpeakers(JSON.stringify({speakers}),rows));
  const prompt=C.speakerPrompt(rows);assert.ok(prompt.includes('本人の識別ではありません'));assert.ok(prompt.includes('対象ID:["u5"]'));
 });
+test('確認済み分類の全ID・役割を検証し、人の省略指定を原文付きで保持する',()=>{
+ const assignments={u1:'S',u2:'O',u3:'A',u4:'P',u5:'uncertain'};
+ assert.equal(C.validateClassification(rows,assignments).groups.A[0].id,'u3');
+ assert.throws(()=>C.validateClassification(rows,{...assignments,u1:'O'}));
+ assert.throws(()=>C.validateClassification(rows,{...assignments,u5:'S'}));
+ const missing={...assignments};delete missing.u2;assert.throws(()=>C.validateClassification(rows,missing));
+ const result=C.validateClassification(rows,{...assignments,u1:'omit'});assert.equal(result.omitted[0].source.text,rows[0].text);assert.equal(result.groups.S.length,0);
+});
+test('区分別要約は他区分のID・再分類を拒否し、不足IDをエラーで示す',()=>{
+ const source=[{id:'u10',speaker:'医師',text:'薬剤Xを5mg処方する方針です。'}];
+ const response={items:[{text:'薬剤Xを5mg処方する方針。',source_ids:['u10']}],omitted:[]};
+ assert.equal(C.validateSectionSummary(JSON.stringify(response),'P',source).texts.P,response.items[0].text);
+ response.items[0].source_ids=['u2'];assert.throws(()=>C.validateSectionSummary(JSON.stringify(response),'P',source),/存在しない/);
+ assert.throws(()=>C.validateSectionSummary(JSON.stringify({items:[],omitted:[]}),'P',source),/u10/);
+ assert.throws(()=>C.validateSectionSummary(JSON.stringify({items:[],omitted:[],S:[]}),'P',source));
+ const prompt=C.sectionSummaryPrompt('P',source);assert.ok(prompt.includes('分類を変更しません'));assert.ok(prompt.includes('不確実性を断定に変えず'));
+});
